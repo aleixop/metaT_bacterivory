@@ -1,0 +1,84 @@
+---
+title: "Figure S3"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+library(DESeq2)
+
+quant_raw_files <-
+  list.files('data/quantification/',
+             pattern = '.*_quantification_raw_min2TPM.txt.gz',
+             full.names = T)  
+
+quantification_raw_dfs <- 
+  read_files_by_experiment(files = quant_raw_files)
+
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+```
+
+## Build DESeq2 object
+
+```{r}
+deseq_objects <-
+  experiment_set_names() %>% 
+    map(
+      .x = .,
+      .f = ~ DESeqDataSetFromMatrix(countData = quantification_raw_dfs[[.x]] %>%
+                                      column_to_rownames('Name') %>%
+                                      round(),
+                                    colData = metadata %>%
+                                      filter(Sample %in% colnames(quantification_raw_dfs[[.x]])) %>%
+                                      column_to_rownames('Sample'),
+                                    ~ State) %>%
+        vst()
+    )
+```
+
+## PCA plots
+
+```{r}
+colors <- 
+  set_names(viridis(option = 'cividis',n = 3), c('lag','growth','decline'))
+
+deseq_objects_names_changed <- 
+  deseq_objects
+
+for (i in names(deseq_objects)){
+  colnames(deseq_objects_names_changed[[i]]) <- as.character(round(deseq_objects[[i]]@colData$Days,1))
+}
+
+pca_plots_deseq <- 
+  experiment_set_names() %>% 
+    map(
+      .x = .,
+      .f = ~ plotPCA(deseq_objects_names_changed[[.x]],
+                     ntop = dim(deseq_objects_names_changed[[.x]])[[1]],
+                     intgroup = 'State',) +
+        scale_color_manual(values = colors,
+                           name = 'State') +
+        labs(title = .x) +
+        ggrepel::geom_text_repel(aes(label = name)) +
+        theme_bw()
+    )
+  
+figS3 <- 
+  wrap_plots(list(pca_plots_deseq$Mar18,pca_plots_deseq$Jul17,pca_plots_deseq$Sep20,pca_plots_deseq$Nov18)) +
+  plot_layout(guides = 'collect') &
+  theme(legend.position = 'bottom',
+        aspect.ratio = 1,
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank())
+
+ggsave(filename = 'figS3.pdf',
+       height = 8,
+       width = 10)
+```
+
+

@@ -1,0 +1,46 @@
+---
+title: "Figure S8"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+mapped_reads_ids <- 
+  read_tsv('data/read_mapping/reads_mapped_eukprot_ids.txt')
+
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+```
+
+## Figure S8 
+
+```{r}
+figS8 <- 
+  mapped_reads_ids %>% 
+  left_join(metadata) %>% 
+  mutate(Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18'))) %>% 
+  ggplot(aes(x = perc_mapped, y = fct_rev(as.character(round(Days,1))))) + 
+  geom_col(aes(fill = as.character(id)), color = 'gray20',size = 0.2, position = position_dodge()) + 
+  facet_grid(Experiment ~ ., scales = 'free', space = 'free') +
+  labs(y = 'Sample (days)',
+       x = '% of reads',
+       title = 'Percentage of mapped reads against EukProt + SAGs',
+       subtitle = '>90% alignment at different identities') +
+  scale_fill_viridis_d(guide = guide_legend(reverse = T), 
+                       name = '% id',
+                       option = 'viridis')
+
+ggsave(plot = figS8,
+       filename = 'figS8.pdf',
+       height = 6,
+       width = 8)
+```
+

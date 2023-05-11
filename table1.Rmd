@@ -1,0 +1,92 @@
+---
+title: "Table 1"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+
+coassembly_summary <- 
+  read_tsv('data/aux/coassembly_summary_min2TPM.txt')
+
+annot_files <- 
+  list.files('data/annotation/',
+             pattern = '.*_annotation_min2TPM.txt.gz',
+             full.names = T)
+
+annotation_dfs <- 
+  read_files_by_experiment(files = annot_files)
+
+quant_tpm_files <- 
+  list.files('data/quantification/',
+             pattern = '.*_quantification_min2TPM.txt.gz',
+             full.names = T)
+
+quantification_tpm_dfs <-
+  read_files_by_experiment(files = quant_tpm_files)
+```
+
+## Coassembly stats
+
+```{r}
+coassembly_summary_clean <- 
+  coassembly_summary %>% 
+  mutate(sum_len = round(sum_len/1e6),
+       num_seqs = round(num_seqs/1e3)) %>% 
+  left_join(metadata %>%
+              filter(metaT == 'Yes') %>% 
+              group_by(Experiment) %>% 
+              summarise(Samples = n())) %>% 
+  select(Experiment,
+         Samples,
+         'Num. transcripts (103)' = num_seqs, 
+         'Size (Mbp)' = sum_len, 
+         'N50 (bp)' = N50)
+```
+
+## KEGG annotation stats
+
+```{r}
+annotation_stats <- 
+  experiment_set_names() %>% 
+  map(~ annotation_dfs[[.x]] %>% 
+        select(Name, KEGG = KEGG_ko) %>% 
+        mutate(across(-Name, ~ .x != '-')) %>% 
+        select(-Name) %>% 
+        summarise(across(everything(), ~ sum(.x)))) %>% 
+  experiment_bind_rows() %>% 
+  pivot_longer(names_to = 'db',
+               values_to = 'transcripts',
+               -Experiment) %>% 
+  left_join(map_df(.x = experiments, 
+                   .f = ~ tibble(Experiment = .x, 
+                                 Total = nrow(quantification_tpm_dfs[[.x]])))) %>% 
+  mutate(Experiment = factor(Experiment, levels = rev(experiments)),
+         Annotated = 100*transcripts/Total) %>% 
+  select(Experiment, 'Annotated with KEGG (%)' = Annotated)
+```
+
+
+## Table 1
+
+```{r}
+table1 <- 
+  metadata %>% 
+  select(Experiment, Month, 'Water temperature (ºC)'= Temp, Year) %>% 
+  unique() %>% 
+  unite(Month, Year, sep = ' ', col = 'Sampling date') %>% 
+  left_join(coassembly_summary_clean) %>% 
+  left_join(annotation_stats)
+
+write_tsv(table1, 'analysis/table1.txt')
+```

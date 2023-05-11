@@ -1,0 +1,123 @@
+---
+title: "Figure S10"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+annot_dir <- 'data/annotation/species52/'
+
+annot_file <- 
+  list.files(annot_dir,
+             pattern = 'emapper.*\\.gz',
+             full.names = T)
+
+annotation_df <- 
+  read_tsv(annot_file) %>% 
+  dplyr::rename('Name' = `#query`)
+
+quantification_sp_tmm_dfs_sp25 <-  
+  readRDS('data/quantification/species52/quantification_sp-level_tmm_species25.rds')
+
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+
+trophic_modes_final_species <- 
+  read_tsv('data/aux/species25_trophic-modes.txt')
+
+trophic_colors <- 
+  c(Heterotroph = 'darkgoldenrod1',
+    Mixotroph = 'lightsalmon3',
+    Phototroph = '#4AC16DFF')
+
+clusters_peptidases <- 
+  read_tsv('data/aux/peptidases_clusters.txt') %>% 
+  mutate(category = 'Peptidases')
+
+clusters_translocases <- 
+  read_tsv('data/aux/translocases_clusters.txt') %>% 
+  filter(str_detect(group, 'V-type') | group == 'inorganic pyrophosphatase') %>% 
+  mutate(category = 'Translocases')
+
+clusters_cazy <- 
+  read_tsv('data/aux/cazy_clusters.txt') %>% 
+  mutate(category = 'CAZy enzymes')
+
+clusters_all <- 
+  list(clusters_peptidases, clusters_translocases, clusters_cazy) %>% 
+  bind_rows()
+```
+
+## Annotation at the KO level
+
+```{r}
+annotation_ko <- 
+  annotation_df %>% 
+  select(Name, KEGG_ko) %>% 
+  filter(KEGG_ko != '-') %>% 
+  mutate(EukProt_ID = str_remove(Name, '_.*'))
+```
+
+## Relative expression of selected enzymes
+
+```{r}
+annotation_categories <- 
+  annotation_ko %>% 
+  expand_annotations('KEGG_ko',simplify = F) %>% 
+  left_join(clusters_all) %>% 
+  select(-KEGG_ko) %>% 
+  filter(!is.na(group)) %>% 
+  unique() 
+
+quantification_sp_tmm_categories_sp25 <-
+  calculate_perc_categories_groups(all_df = quantification_tmm_dfs_sp25,
+                            sp_df = quantification_sp_tmm_dfs_sp25)
+```
+
+## Figure 5
+
+```{r}
+order_groups <- # from fig4
+  c("cysteine peptidases", "tripeptidyl-peptidase I", "serine peptidases", "legumain", "aspartyl peptidases", "carboxypeptidase Z", "V-type H+-transporting ATPase 16kDa proteolipid subunit", "V-type H+-transporting ATPase subunit a", "inorganic pyrophosphatase", "V-type H+-transporting ATPase subunit B", "GT66", "GT75", "GH18", "GH20", "AA13", "GT95", "GH3", "GH13", "CE10", "GH7")
+
+p_peptidases_comparison <- 
+  plot_comparison_categories_trophic_mode_state('Peptidases')
+  
+p_translocases_comparison <- 
+  plot_comparison_categories_trophic_mode_state('Translocases', wrap = 20)
+
+p_cazy_comparison <- 
+  plot_comparison_categories_trophic_mode_state('CAZy enzymes')
+
+p1 <- p_peptidases_comparison + labs(y = 'Relative gene expression (%)')
+
+ylab <-  
+ ggplot(data.frame(l = p1$labels$y, x = 1, y = 1)) +
+      geom_text(aes(x, y, label = l), angle = 90) + 
+      theme_void() +
+      coord_cartesian(clip = "off")
+
+figS10_raw <- 
+  ((p_peptidases_comparison | p_translocases_comparison) +
+  plot_layout(widths = c(3/5,2/5))) /
+  p_cazy_comparison +
+  plot_layout(guides = 'collect') & 
+  theme(legend.position = 'bottom') &
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01))
+
+figS10 <- 
+  cowplot::plot_grid(ylab, figS10_raw,rel_widths = c(1,50))
+
+ggsave('figS10.pdf',
+       height = 12,
+       width = 20)
+```
+

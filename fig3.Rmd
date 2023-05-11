@@ -1,0 +1,265 @@
+---
+title: "Figure 3"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+
+main_log_kos <- 
+  read_tsv('data/aux/top_kos_log_categories.txt')
+
+quantification_ko_dfs <- 
+  readRDS('data/quantification/ko_quant_tpm.rds') %>% 
+  list_pivot_longer()
+
+quant_tpm_files <- 
+  list.files('data/quantification/',
+             pattern = '.*_quantification_min2TPM.txt.gz',
+             full.names = T)
+
+quantification_tpm_dfs <-
+  read_files_by_experiment(files = quant_tpm_files) %>% 
+  list_pivot_longer()
+
+annot_files <- 
+  list.files('data/annotation/',
+             pattern = '.*_annotation_min2TPM.txt.gz',
+             full.names = T)
+
+annotation_dfs <- 
+  read_files_by_experiment(files = annot_files)
+
+kegg_ko_list <- 
+  read_tsv('data/aux/ko_definition_simplified.txt')
+
+clusters_translocases <- 
+  read_tsv('data/aux/translocases_clusters.txt')
+
+clusters_cazy <- 
+  read_tsv('data/aux/cazy_clusters.txt')
+
+clusters_peptidases <- 
+  read_tsv('data/aux/peptidases_clusters.txt')
+
+growth_samples <- 
+  metadata %>% 
+  filter(metaT == 'Yes',
+         State == 'growth') %>% 
+  pull(Sample)
+```
+
+## Figure 3
+
+### A
+
+```{r}
+quantification_main_ko_dfs <- 
+  experiment_set_names() %>% 
+  map(.x = .,
+      .f = ~ quantification_ko_dfs[[.x]] %>% 
+        filter(KEGG_ko %in% main_log_kos$KEGG_ko) %>%
+        left_join(kegg_ko_list, by = 'KEGG_ko') %>% 
+        left_join(main_log_kos %>% select(-KO_Name), by = 'KEGG_ko')) 
+
+quantification_main_cats_dfs <- 
+  experiment_set_names() %>% 
+  map(.x = .,
+      .f = ~ quantification_main_ko_dfs[[.x]] %>% 
+        group_by(Sample, main_category) %>% 
+        summarise(Abundance = sum(Abundance)) %>% 
+        mutate(Sample = factor(Sample, levels = metadata$Sample)) %>% 
+        arrange(Sample))
+
+quantification_main_cats_dfs_log <- 
+  experiment_set_names() %>% 
+  map(~ quantification_main_cats_dfs[[.x]] %>% 
+        left_join(metadata) %>% 
+        filter(State == 'growth'))
+
+order_cats <- 
+  quantification_main_cats_dfs_log %>% 
+  bind_rows() %>% 
+  group_by(main_category) %>% 
+  summarise(total = sum(Abundance)) %>% 
+  arrange(-total)
+
+fig3A <- 
+  quantification_main_cats_dfs_log %>% 
+  experiment_bind_rows() %>%
+  mutate(main_category = factor(main_category, levels = rev(order_cats$main_category))) %>% 
+  ggplot(aes(y = main_category, x = Abundance)) +
+  geom_jitter(width = 0, height = 0.1, alpha = 0.5) +
+  # geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_x_log10(labels = scientific_10) +
+  labs(x = 'TPM', y = NULL)
+```
+
+### B
+
+#### Calculate fold change of KO's.
+
+```{r}
+fold_change_ko <-
+  experiment_set_names() %>%
+  map(.x = .,
+      .f = ~ quantification_ko_dfs[[.x]] %>%
+        filter(KEGG_ko != '-', !is.na(KEGG_ko)) %>%
+        left_join(metadata) %>%
+        group_by(KEGG_ko, State) %>%
+        summarise(Abundance = mean(Abundance)) %>%
+        pivot_wider(names_from = State, values_from = Abundance, values_fill = 0) %>%
+        mutate(fc_growth_lag = growth/lag,
+               fc_growth_decline = ifelse(.x == 'Jul17',NA_integer_,growth/decline)))
+```
+
+#### Calculate reference fold change of housekeeping genes.
+
+```{r}
+housekeeping_genes <- 
+  main_log_kos %>% 
+  filter(housekeeping == 'Yes') %>% 
+  pull(KEGG_ko)
+
+fc_hk_ref <- 
+  experiment_set_names() %>% 
+  map(.x = .,
+      .f = ~ fold_change_ko[[.x]] %>% 
+        filter(KEGG_ko %in% housekeeping_genes) %>% 
+        select(KEGG_ko,fc_growth_lag,fc_growth_decline) %>% 
+        pivot_longer(names_to = 'comparison',
+                     values_to = 'fold_change',
+                     -KEGG_ko) %>% 
+        group_by(comparison) %>% 
+        mutate(outlier = is.outlier(fold_change)) %>% 
+        filter(outlier == F | is.na(outlier)) %>% 
+        summarise(fc_ref = mean(fold_change, na.rm = T)) %>% 
+        deframe())
+```
+
+#### Translocases
+
+```{r}
+translocases_quant_dfs <-
+  clusters_translocases %>% 
+  quantification_maker()
+
+translocases_sample_quant_dfs <-
+  translocases_quant_dfs %>% 
+  quantification_samples_category()
+  
+fold_change_translocases <- 
+  translocases_quant_dfs %>% 
+  fold_change_category()
+
+fc_translocases_with_ref <- 
+  fold_change_translocases %>% 
+  add_fc_hk()
+
+fc_translocases_selection_with_ref <- 
+  experiment_set_names() %>% 
+  map(~ fc_translocases_with_ref[[.x]] %>% 
+        filter(str_detect(group, 'V-type') | group == 'inorganic pyrophosphatase'))
+
+p_fc_translocases_selection <- 
+  fc_translocases_selection_with_ref %>% 
+  plot_fc(remove_exp_labels = T, title = 'Translocases',
+          category_sample_quant_dfs = 
+            experiment_set_names() %>% 
+            map(~ translocases_sample_quant_dfs[[.x]] %>% 
+                  filter(str_detect(group, 'V-type') | group == 'inorganic pyrophosphatase')))
+```
+
+#### CAZy
+
+```{r}
+clusters_cazy_renamed <- 
+  clusters_cazy %>% 
+  left_join(kegg_ko_list) %>% 
+  mutate(KO_Name = str_replace(KO_Name, '---| \\/ ',' '),
+         group = if_else(group == 'GH7','GH7',paste0(KO_Name, ' (',group,')')))
+
+cazy_quant_dfs <-
+  clusters_cazy_renamed %>% 
+  quantification_maker()
+
+cazy_sample_quant_dfs <-
+  cazy_quant_dfs %>% 
+  quantification_samples_category()
+
+fold_change_cazy <- 
+  cazy_quant_dfs %>% 
+  fold_change_category()
+
+fc_cazy_with_ref <- 
+  fold_change_cazy %>% 
+  add_fc_hk()
+
+p_fc_cazy <- 
+  fc_cazy_with_ref %>% 
+  plot_fc(title = 'CAZy enzymes',
+          category_sample_quant_dfs = cazy_sample_quant_dfs)
+```
+
+#### Peptidases
+
+```{r}
+peptidases_quant_dfs <-
+  clusters_peptidases %>% 
+  quantification_maker()
+
+peptidases_sample_quant_dfs <-
+  peptidases_quant_dfs %>% 
+  quantification_samples_category()
+
+fold_change_peptidases <- 
+  peptidases_quant_dfs %>% 
+  fold_change_category()
+
+fc_peptidases_with_ref <- 
+  fold_change_peptidases %>% 
+  add_fc_hk()
+
+p_fc_peptidases <- 
+  fc_peptidases_with_ref %>% 
+  plot_fc(remove_exp_labels = T, title = 'Peptidases',
+          category_sample_quant_dfs = peptidases_sample_quant_dfs)
+```
+
+#### Fig 3B
+
+```{r}
+fig3B <- 
+  (p_fc_peptidases+labs(x='')) /
+  (p_fc_translocases_selection+labs(x='')) /
+  p_fc_cazy +
+  plot_layout(heights = c(0.225,0.225,0.55), guides = 'collect') &
+  theme(legend.position = 'bottom',
+        legend.box = 'vertical') &
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 35))
+```
+## Figure 3
+
+```{r}
+fig3 <- 
+  fig3A + fig3B +
+  plot_layout(widths = c(0.3,0.7)) +
+  plot_annotation(tag_levels = list(c('A','B')))
+
+# after exporting, move legend to the left and add asterisks to the categories in B that represent a cluster of KO's (done with Illustrator): cysteine/serine/aspartyl peptidases and GH7
+
+ggsave('fig3.pdf',
+       height = 11,
+       width = 11)
+```
+

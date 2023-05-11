@@ -1,0 +1,346 @@
+---
+title: "Figure 2"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+library(ggtree)
+library(dendextend)
+library(ggdendro)
+```
+
+## Read files
+
+```{r}
+metadata <- 
+  readRDS('data/metadata/metadata.rds') %>% 
+  mutate(Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18')))
+
+quantification_ko_dfs <- 
+  readRDS('data/quantification/ko_quant_tpm.rds') %>% 
+  list_pivot_longer()
+
+kegg_ko_list <- 
+  read_tsv('data/aux/ko_definition.txt')
+
+kegg_ko_brite <- 
+  vroom('data/aux/kegg_ko_brite.txt')
+
+kegg_brite <- 
+  vroom('data/aux/kegg_brite.txt')
+```
+
+## Figure 2
+
+### A
+
+```{r}
+top_kos_per_phase <- 
+  quantification_ko_dfs %>% 
+  experiment_bind_rows() %>%
+  left_join(metadata) %>% 
+  filter(KEGG_ko != '-') %>% 
+  group_by(KEGG_ko, State) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  left_join(kegg_ko_list) %>% 
+  mutate(perc = 100*Abundance/sum(Abundance))
+
+top_kos <- 
+  top_kos_per_phase %>%  
+  summarise(Abundance = sum(Abundance)) %>% 
+  left_join(kegg_ko_list) 
+
+top_kos_vector <- 
+  top_kos %>% 
+  slice_max(n = 25, order_by = Abundance)
+
+fig2A <- 
+  quantification_ko_dfs %>% 
+  bind_rows(.id = 'Experiment') %>%
+  left_join(metadata) %>% 
+  filter(KEGG_ko %in% top_kos_vector$KEGG_ko) %>% 
+  left_join(kegg_ko_list) %>% 
+  mutate(KEGG_ko = factor(KEGG_ko, levels = top_kos_vector$KEGG_ko),
+         KO_Name = str_remove(KO_Name, ' \\[.*'),
+         KO_Name = factor(KO_Name, levels = str_remove(top_kos_vector$KO_Name, ' \\[.*'))) %>%
+  arrange(KO_Name) %>% 
+  mutate(short_name = case_when(str_detect(KO_Name, 'large subunit ribosomal') ~ 
+                                  str_replace(KO_Name, 'large subunit ','LSU '),
+                                str_detect(KO_Name, 'small subunit ribosomal') ~ 
+                                  str_replace(KO_Name, 'small subunit ','SSU '),
+                                str_detect(KO_Name, 'light-harvesting complex II') ~
+                                  str_replace(KO_Name, 'light-harvesting complex II','LHCII'),
+                                TRUE ~ as.character(KO_Name)),
+         short_name = str_replace(short_name, 'protein', 'prot.')) %>% 
+  mutate(short_name = factor(short_name, levels = unique(.$short_name))) %>% 
+  ggplot(aes(x = short_name, y = Abundance)) +
+  geom_boxplot(aes(fill = State),
+               size = 0.3,
+               outlier.size = 1,
+               color = 'gray30') +
+  scale_fill_viridis_d(name = 'State', option = 'cividis') +
+  labs(y = 'TPM', x = NULL)  +
+  scale_y_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9)) +
+  guides(fill = 'none')
+```
+
+### B
+
+```{r}
+nmds <- 
+  quantification_ko_dfs %>% 
+  experiment_bind_rows() %>% 
+  filter(!is.na(KEGG_ko), KEGG_ko != '-') %>% # remove unannotated transcripts
+  nmds_from_tidy_df(row_names = 'KEGG_ko', fill = 0) %>% 
+  left_join(metadata)
+  
+stress <- 
+  quantification_ko_dfs %>% 
+  experiment_bind_rows() %>% 
+  filter(!is.na(KEGG_ko), KEGG_ko != '-') %>% 
+  nmds_from_tidy_df(row_names = 'KEGG_ko', fill = 0, stress = T)
+  
+fig2B <- 
+  nmds %>% 
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  geom_polygon(data = create_hulls(nmds, 'State','NMDS1','NMDS2'), 
+             aes(fill = State), alpha = 0.5) +
+  geom_point(aes(shape = Experiment),
+             size = 2.5) +
+  geom_text(aes(label = paste0('Stress: ',stress),
+                x = 0.8*min(NMDS1),
+                y = 0.8*max(NMDS2)),
+            check_overlap = T,
+            size = 3) + 
+  scale_fill_viridis_d(option = 'cividis') +
+  scale_shape_manual(values = c(15,16,17,18)) +
+  labs(x = NULL,
+       y = NULL) +
+  guides(fill = guide_legend(override.aes = list(alpha = 0.7), order = 1),
+         shape = guide_legend(order = 2)) +
+  theme(legend.title = element_text(size = 12))
+```
+
+### C
+
+```{r}
+top_kos_with_brite <- 
+  top_kos %>% 
+  left_join(kegg_ko_brite) %>% 
+  left_join(kegg_brite) %>% 
+  filter(str_detect(Sub, '^Protein families')) %>% 
+  mutate(Category = case_when(BRITE_description == 'Enzymes' ~ str_remove(A, '[0-9]+ '),
+                              TRUE ~ BRITE_description)) %>% 
+  select(-c(A,B,C,D,E,F)) %>% 
+  unique()
+
+top_brites <- 
+  top_kos_with_brite %>% 
+  group_by(Category, BRITE, Sub) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  arrange(-Abundance)
+
+too_generic_or_redundant_brites <- 
+  c('Exosome',
+    'Messenger RNA biogenesis',
+    'Mitochondrial biogenesis',
+    'Chromosome and associated proteins')
+
+most_abundant_brites <- 
+  top_brites %>% 
+  filter(Abundance > 1e4,
+         !Category %in% too_generic_or_redundant_brites) %>% 
+  pull(Category)
+
+top_brite_with_top_kos <- 
+  top_kos_with_brite %>%
+  filter(Category %in% most_abundant_brites) %>% 
+  group_by(Category) %>% 
+  slice_max(n = 5, order_by = Abundance)
+
+top_brite_dynamics <- 
+  quantification_ko_dfs %>% 
+  bind_rows(.id = 'Experiment') %>%
+  left_join(metadata) %>% 
+  filter(KEGG_ko != '-') %>% 
+  left_join(kegg_ko_brite) %>% 
+  left_join(kegg_brite) %>% 
+  mutate(Category = case_when(BRITE_description == 'Enzymes' ~ str_remove(A, '[0-9]+\\. '),
+                            TRUE ~ BRITE_description)) %>% 
+  filter(Category %in% most_abundant_brites) %>% 
+  left_join(top_brites %>% ungroup() %>% select(Category, Sub)) %>% 
+  group_by(Experiment, Category, Sample2, State, Sub) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  group_by(Experiment, Category) %>% 
+  mutate(Abundance_perc = 100*Abundance/max(Abundance),
+         Sub = str_to_sentence(str_remove(Sub, '.*: '))) %>% 
+  arrange(State, Sample2)
+
+mat <- 
+  top_brite_dynamics %>% 
+  ungroup() %>% 
+  arrange(State, Sample2) %>% 
+  select(Category, Sample2, Abundance_perc) %>% 
+  pivot_wider(names_from = Sample2,
+              values_from = Abundance_perc,
+              values_fill = 0) %>% 
+  column_to_rownames('Category')
+
+color_states <- 
+  set_names(viridis(option = 'cividis', n = 3), c('lag','growth','decline'))
+
+dend <- 
+  readRDS('data/aux/dend_order_fig.rds')
+
+dend_col <- 
+  dendextend::as_hclust_fixed(dend) %>% 
+  ggtree(ladderize = F, size = 0.2) +
+  scale_x_reverse() + 
+  coord_flip()
+
+cols_order <- 
+  ggdendro::dendro_data(dend)$labels$label
+
+clust_row <- 
+  hclust(dist(mat))
+
+rows_order <- 
+  clust_row$labels[clust_row$order]
+
+dend_row <-
+  ggtree::ggtree(clust_row, ladderize = F, size = 0.2)
+
+df <- 
+  top_brite_dynamics %>% 
+  mutate(Sample2 = factor(Sample2, levels = cols_order),
+         Category = factor(Category, levels = rows_order))
+
+heatmap_body <-
+  df %>% 
+  ggplot(aes(y = Category,
+             x = Sample2)) +
+  geom_tile(aes(fill = Abundance_perc), color = 'white', size = 0.2) +
+  scale_fill_viridis_c(option = 'mako',
+                       name = 'Relative\nabundance (%)') +
+  labs(x = '',
+       y = '') +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank())
+
+heatmap_labels <- 
+  df %>%
+  ungroup() %>% 
+  select(Category) %>% 
+  unique() %>% 
+  ggplot(aes(y = Category,
+             x = 0)) +
+  geom_text(aes(label = Category), hjust =0, size =3, color = 'gray30') +
+  theme_void() +
+  xlim(0,1)
+
+sub_categories <-
+  df %>%
+  ungroup() %>%
+  select(Category, Sub) %>%
+  unique() %>%
+  ggplot(aes(y = Category,
+             x = 'x')) +
+  geom_tile(aes(fill = Sub), color = 'white', size = 0.2, alpha =0.9) +
+  scale_fill_manual(values = c('#9312AC','#d291d6','#ebc7ed'),
+                    # values = viridis(option = 'turbo', n = 9)[c(1,2,3)],
+                    name = 'Category') +
+  theme_void()
+
+state_colors <-
+  df %>%
+  ggplot(aes(y = '',
+             x = Sample2)) +
+  geom_tile(aes(fill = State), color = 'white', size = 0.2) +
+  scale_fill_manual(values = color_states) +
+  guides(fill = 'none') +
+  theme_void() +
+  theme(plot.margin = margin(0,0,0,0))
+
+boxplots <- 
+  df %>% 
+  ggplot(aes(x = Abundance,
+             y = Category)) +
+  geom_boxplot(size = 0.3, outlier.size = 1, color = 'gray30') +
+  scale_fill_manual(values = viridis(option = 'turbo', n = 9)[c(3,4,7)],
+                    name = 'Category') +
+  scale_x_log10(labels = scales::trans_format("log10", scales::label_math())) +
+  labs(x = 'TPM',
+       y = NULL) +
+  theme(axis.text.y = element_blank())
+
+
+hm_layout <- 
+  "
+  #AAAAAAAAAAAAAA##################
+  #AAAAAAAAAAAAAA##################
+  #BBBBBBBBBBBBBB##################
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  CDDDDDDDDDDDDDDFFFFFFEGGGGGGGGGGG
+  "
+
+fig2C <- 
+  dend_col + 
+  state_colors + 
+  dend_row + 
+  heatmap_body +
+  sub_categories +
+  boxplots +
+  heatmap_labels +
+  plot_layout(design = hm_layout,
+              guides = 'collect') &
+  theme(legend.position = 'bottom')
+```
+
+### Fig 2
+
+```{r}
+fig2 <- 
+  ((fig2A + fig2B + 
+  plot_layout(widths = c(0.7,0.3),
+              guides = 'collect') +
+  plot_annotation(tag_levels = 'A') &
+  theme(legend.position = 'bottom')) /
+  fig2C) +
+  plot_layout(heights = c(0.3,0.7)) +
+  plot_annotation(tag_levels = list(c('A','B','','','C'))) &
+  theme(legend.title = element_text(size = 12))
+
+ggsave(plot = fig2,
+       'fig2.pdf',
+       height = 14,
+       width = 12)
+
+# after exporting, I moved the position of the dendrogram closer to the heatmap body
+```
+

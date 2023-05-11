@@ -1,0 +1,171 @@
+---
+title: "Preprocessing"
+author: "Aleix Obiol"
+date: "11/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+library(edgeR)
+```
+
+## Collapse transcripts tables to KO level
+
+### Main data and metadata
+
+```{r}
+annot_files <- 
+  list.files('data/annotation/',
+             pattern = '.*_annotation_min2TPM.txt.gz',
+             full.names = T)
+
+quant_tpm_files <- 
+  list.files('data/quantification/',
+             pattern = '.*_quantification_min2TPM.txt.gz',
+             full.names = T)
+
+quant_raw_files <-
+  list.files('data/quantification/',
+             pattern = '.*_quantification_raw_min2TPM.txt.gz',
+             full.names = T)  
+
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+
+quantification_tpm_dfs <-
+  read_files_by_experiment(files = quant_tpm_files)
+
+quantification_raw_dfs <- 
+  read_files_by_experiment(files = quant_raw_files)
+
+annotation_dfs <- 
+  read_files_by_experiment(files = annot_files)
+```
+
+### Create collapsed tables
+
+#### KEGG annotations
+
+```{r}
+out.dir <- 'data/quantification/'
+
+quantification_ko_dfs_tpm <-
+  experiment_set_names() %>% 
+  map(.x = .,
+      .f = ~ collapse_counts_by_annotation(annotation = annotation_dfs[[.x]],
+                                           counts = quantification_tpm_dfs[[.x]],
+                                           group = 'KEGG_ko') %>% 
+        mutate(Sample = factor(Sample, levels = metadata$Sample)) %>% 
+        arrange(Sample) %>% 
+        pivot_wider(names_from = 'Sample',
+                    values_from = 'Abundance',
+                    values_fill = 0))
+
+quantification_ko_dfs_raw <-
+  experiment_set_names() %>%  
+  map(.x = .,
+      .f = ~ collapse_counts_by_annotation(annotation = annotation_dfs[[.x]],
+                                           counts = quantification_raw_dfs[[.x]],
+                                           group = 'KEGG_ko') %>% 
+        mutate(Sample = factor(Sample, levels = metadata$Sample)) %>% 
+        arrange(Sample) %>% 
+        pivot_wider(names_from = 'Sample',
+                    values_from = 'Abundance',
+                    values_fill = 0))
+
+saveRDS(quantification_ko_dfs_tpm,file = paste0(out.dir,'ko_quant_tpm.rds'))
+saveRDS(quantification_ko_dfs_raw,file = paste0(out.dir,'ko_quant_raw.rds'))
+```
+
+## Normalize quantification table of species 25
+
+### Read files
+
+```{r}
+annot_dir <- 'data/annotation/species52/'
+quant_dir <- 'data/quantification/species52/'
+
+quant_norm_files <- # read-length normalized counts
+    list.files(quant_dir,
+             pattern = '.*_quant_merged_normreads\\.txt',
+             full.names = T)
+
+quantification_normreads_dfs <- 
+  read_files_by_experiment(files = quant_norm_files) 
+
+final_species_selection <- 
+  readRDS('data/aux/species25_selection.rds')
+```
+
+### Normalize tables
+
+Remove references with 0 total reads.
+
+```{r}
+quantification_normreads_dfs_clean <- 
+  quant_filterer(quantification_normreads_dfs)
+```
+
+Add a pseudocount to the read length normalized counts as in Salazar et al. (2019). 
+
+```{r}
+quantification_normreads_pseudocount_dfs <- 
+  experiment_set_names() %>% 
+  map(~ quantification_normreads_dfs_clean[[.x]] %>% 
+        mutate(across(where(is.double), ~ round(1e6*.x/max(.x)))))
+
+edger_objects <-
+  experiment_set_names() %>% 
+  map(~ DGEList(counts = quantification_normreads_pseudocount_dfs[[.x]] %>%
+                  column_to_rownames('Name'),
+                group =  metadata %>%
+                  filter(Sample %in% colnames(quantification_normreads_pseudocount_dfs[[.x]])) %>%
+                  pull(State)) %>%
+        calcNormFactors(method = 'TMM'))
+
+quantification_tmm_dfs <- 
+  experiment_set_names() %>% 
+  map(~ cpm(edger_objects[[.x]]) %>% 
+        as_tibble(rownames = 'Name'))
+
+saveRDS(quantification_tmm_dfs, paste0(quant_dir,'quantification_tmm_species52.rds'))
+```
+
+Create species level version.
+
+```{r}
+quantification_sp_tmm_dfs <- 
+  species_collapser(quantification_tmm_dfs)
+
+saveRDS(quantification_sp_tmm_dfs, paste0(quant_dir,'quantification_sp-level_tmm_species52.rds'))
+```
+
+Versions for final 25 species.
+
+```{r}
+quantification_tmm_dfs_long <- 
+  quantification_tmm_dfs %>% 
+  list_pivot_longer()
+
+quantification_tmm_dfs_sp25 <- 
+  experiment_set_names() %>% 
+  map(~ quantification_tmm_dfs_long[[.x]] %>% 
+        mutate(EukProt_ID = str_remove(Name, '_.*'),
+               Sample = factor(Sample, metadata$Sample)) %>% 
+        filter(EukProt_ID %in% final_species_selection[[.x]]))
+
+quantification_sp_tmm_dfs_long <- 
+  quantification_sp_tmm_dfs %>% 
+  list_pivot_longer()
+
+quantification_sp_tmm_dfs_sp25 <- 
+  experiment_set_names() %>% 
+  map(~ quantification_sp_tmm_dfs_long[[.x]] %>% 
+        filter(EukProt_ID %in% final_species_selection[[.x]]) %>% 
+        mutate(Sample = factor(Sample, metadata$Sample))) 
+
+saveRDS(quantification_tmm_dfs_sp25, paste0(quant_dir,'quantification_tmm_species25.rds'))
+saveRDS(quantification_sp_tmm_dfs_sp25, paste0(quant_dir,'quantification_sp-level_tmm_species25.rds'))
+```

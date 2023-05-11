@@ -1,0 +1,85 @@
+---
+title: "Figure S7"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+quantification_sp_tmm_dfs_sp25 <-  
+  readRDS('data/quantification/species52/quantification_sp-level_tmm_species25.rds')
+
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+
+trophic_modes_final_species <- 
+  read_tsv('data/aux/species25_trophic-modes.txt')
+
+trophic_colors <- 
+  c(Heterotroph = 'darkgoldenrod1',
+    Mixotroph = 'lightsalmon3',
+    Phototroph = '#4AC16DFF')
+```
+
+## Figure S7 
+
+```{r}
+names_formatter <- function(df){
+  
+  df %>% 
+    mutate(Name_to_Use2 = 
+                 case_when(
+                   str_detect(Name_to_Use, 'MAST') ~ str_remove(Name_to_Use,'.*sp_'),
+                   str_detect(Name_to_Use, 'Picozoa|Acanthoecidae') ~ str_replace_all(Name_to_Use,'_',' '),
+                   Name_to_Use == "Mataza_sp_D1" ~ "*Mataza* sp D1",
+                   Name_to_Use == "Rhizochromulina_sp_CCMP1243" ~ "*Rhizochromulina* sp CCMP1243",
+                   Name_to_Use == "Isochrysidales_sp_CCMP1244" ~ "*Isochrysidales* sp. CCMP1244",
+                   Name_to_Use == "ChrysophyceaeNA-sp1" ~ "ChrysophyceaeNA-sp1",
+                   Name_to_Use == "Micromonas-sp1" ~ "Micromonas-sp1",
+                   TRUE ~ paste0('*',str_replace_all(Name_to_Use,'_',' '),'*')),
+               Name_to_Use2 = str_replace(Name_to_Use2, 'sp ', 'sp. '))
+  
+}
+
+names_factorer <- function(df){
+  
+  df %>% 
+    arrange(Name_to_Use) %>% 
+    mutate(Name_to_Use2 = factor(Name_to_Use2, levels = unique(.$Name_to_Use2)),
+           Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18')))
+  
+}
+
+figS7 <- 
+  quantification_sp_tmm_dfs_sp25 %>% 
+  experiment_bind_rows() %>%
+  left_join(metadata) %>% 
+  left_join(trophic_modes_final_species) %>% 
+  left_join(eukprot_tax) %>% 
+  names_formatter() %>% 
+  names_factorer() %>% 
+  ggplot(aes(x = as.character(round(Days)), y = Abundance)) +
+  geom_col(aes(fill = trophic_mode)) +
+  ggh4x::facet_grid2(Name_to_Use2 ~ Experiment, scales = 'free', independent = 'all') +
+  theme(strip.text.y = element_markdown(angle = 0)) +
+  labs(y =  "Pseudocounts per million (x10<sup>4</sup>)",
+       x = 'Time (days)') +
+  guides(color = 'none') +
+  scale_color_viridis_c(option = 'cividis') +
+  scale_fill_manual(name = '',values = trophic_colors) +
+  theme(axis.title.y = element_markdown(),
+        legend.position = 'bottom')
+  
+ggsave(filename = 'figS7.pdf',
+       height = 40,
+       width = 12,
+       limitsize = F)
+```
+

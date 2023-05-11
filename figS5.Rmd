@@ -1,0 +1,147 @@
+---
+title: "Figure S5"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+# remotes::install_github("ropenscilabs/ochRe")
+library(DESeq2)
+```
+
+## Read files
+
+```{r}
+tax_dir <- 'data/taxonomy/'
+annot_dir <- 'data/annotation/'
+quant_dir <- 'data/quantification/' 
+
+tax_files <- 
+  list.files(tax_dir, 
+             pattern = '_taxonomy_min2TPM.txt.gz', 
+             full.names = T)
+
+annot_files <- 
+  list.files(annot_dir,
+             pattern = '.*_annotation_min2TPM.txt.gz',
+             full.names = T)
+
+quant_tpm_files <- 
+  list.files(quant_dir,
+             pattern = '.*_quantification_min2TPM.txt.gz',
+             full.names = T)
+
+quantification_tpm_dfs <-
+  read_files_by_experiment(files = quant_tpm_files)
+
+annotation_dfs <- 
+  read_files_by_experiment(files = annot_files)
+
+tax_dfs <- 
+  read_files_by_experiment(files = tax_files)
+
+experiments <- 
+  names(quantification_tpm_dfs)
+
+quantification_ko_dfs <- 
+  readRDS('data/quantification/ko_quant_tpm.rds')
+
+main_log_kos <- 
+  read_tsv('data/aux/top_kos_log_categories.txt')
+
+kegg_ko_list <- 
+  read_tsv('data/aux/ko_definition_simplified.txt')
+
+clusters_peptidases <- 
+  read_tsv('data/aux/peptidases_clusters.txt')
+```
+
+## Calculate overlap
+
+```{r}
+peptidases_20 <- 
+  main_log_kos %>% 
+  filter(main_category == 'Peptidases') %>% 
+  pull(KEGG_ko)
+
+pairwise_combinations <- 
+  peptidases_20 %>% 
+  combn(2)
+
+annotation_peptidases <- 
+  annotation_dfs %>% 
+  bind_rows() %>% 
+  expand_annotations('KEGG_ko') %>% 
+  filter(KEGG_ko %in% peptidases_20)
+
+comparison <- 
+    seq(1,ncol(pairwise_combinations)) %>% 
+    map_df(~ tibble(a = pairwise_combinations[,.x][1], 
+                    b = pairwise_combinations[,.x][2],
+                    total_a = sum(annotation_peptidases$KEGG_ko == a),
+                    total_b = sum(annotation_peptidases$KEGG_ko == b),
+                    shared = annotation_peptidases %>% 
+                      filter(KEGG_ko %in% c(a,b)) %>% 
+                      group_by(Name) %>% 
+                      tally() %>% 
+                      filter(n == 2) %>% 
+                      nrow(),
+                    perc = 100*shared/total_a))
+
+comparison_overlap_all <- 
+    comparison %>% 
+    bind_rows(comparison %>% 
+                dplyr::rename(a = b,
+                              b = a,
+                              total_b = total_a,
+                              total_a = total_b) %>% 
+                mutate(perc = 100*shared/total_a)) %>% 
+  left_join(kegg_ko_list, by = c('a' = 'KEGG_ko')) %>% 
+  left_join(kegg_ko_list, by = c('b' = 'KEGG_ko')) %>% 
+  dplyr::rename('KO_Name_a' = KO_Name.x) %>% 
+  dplyr::rename('KO_Name_b' = KO_Name.y) %>% 
+  mutate(across(contains('KO_Name'), ~ str_remove(.x,' \\(.*')),
+         across(contains('KO_Name'), ~ str_remove(.x,' protein$')),
+         across(contains('KO_Name'), ~ str_replace(.x,'serine','s.')),
+         across(contains('KO_Name'), ~ str_replace(.x,'cysteine','c.')),
+         across(contains('KO_Name'), ~ str_replace(.x,'carboxypeptidase','cp')))
+
+comparison_with_clusters <- 
+  comparison_overlap_all %>% 
+  left_join(clusters_peptidases, by = c('a' = 'KEGG_ko')) %>% 
+  left_join(clusters_peptidases, by = c('b' = 'KEGG_ko')) %>% 
+  filter(group.x == group.y) %>% 
+  select(everything(),group = group.x, -group.y)
+
+comparison_with_clusters <- 
+  comparison_with_clusters %>% 
+  bind_rows(comparison_with_clusters %>% 
+              select(-c(contains('b'),shared,perc)) %>% 
+              unique() %>% 
+              mutate(b = a,
+                     shared = total_a, 
+                     perc = 100,
+                     total_b = total_a,
+                     KO_Name_b = KO_Name_a))
+
+clust_caths <- 
+  c('1' = 'cysteine peptidases','2' = 'aspartyl peptidases', '3' = 'serine peptidases')
+
+p_overlap_list <- 
+  1:3 %>% 
+  map(~ overlap_facet_plotter(df = comparison_with_clusters %>% filter(group == clust_caths[[.x]]), 
+                              title = clust_caths[.x]))
+
+figS5 <- 
+  p_overlap_list[[1]] / 
+  (p_overlap_list[[2]]|p_overlap_list[[3]]) +
+  plot_layout(guides = 'collect',
+              heights = c(0.7,0.3))
+
+ggsave('figS5.pdf',
+       height = 8,
+       width = 8)
+```

@@ -1,0 +1,168 @@
+---
+title: "Figure S4"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+# remotes::install_github("ropenscilabs/ochRe")
+library(DESeq2)
+```
+
+## Read files
+
+```{r}
+tax_dir <- 'data/taxonomy/'
+annot_dir <- 'data/annotation/'
+quant_dir <- 'data/quantification/' 
+
+tax_files <- 
+  list.files(tax_dir, 
+             pattern = '_taxonomy_min2TPM.txt.gz', 
+             full.names = T)
+
+annot_files <- 
+  list.files(annot_dir,
+             pattern = '.*_annotation_min2TPM.txt.gz',
+             full.names = T)
+
+quant_tpm_files <- 
+  list.files(quant_dir,
+             pattern = '.*_quantification_min2TPM.txt.gz',
+             full.names = T)
+
+quantification_tpm_dfs <-
+  read_files_by_experiment(files = quant_tpm_files)
+
+annotation_dfs <- 
+  read_files_by_experiment(files = annot_files)
+
+tax_dfs <- 
+  read_files_by_experiment(files = tax_files)
+
+experiments <- 
+  names(quantification_tpm_dfs)
+
+quantification_ko_dfs <- 
+  readRDS('data/quantification/ko_quant_tpm.rds')
+```
+
+## Fig S4A: annotation stats
+
+```{r}
+tax_df <- 
+  tax_dfs %>% 
+  bind_rows(.id = 'Experiment') %>% 
+  mutate(Experiment = factor(Experiment, levels = rev(experiments)),
+         classified = factor(classified)) %>% 
+  group_by(Experiment, classified) %>% 
+  tally() %>% 
+  mutate(perc = 100*n/sum(n))
+
+annotation_stats <- 
+  experiments %>% 
+  set_names(
+    map(.x = .,
+        .f = ~ annotation_dfs[[.x]] %>% 
+          select(Name, eggNOG = eggNOG_OGs, KEGG = KEGG_ko, PFAM =PFAMs) %>% 
+          mutate(across(-Name, ~ .x != '-')) %>% 
+          select(-Name) %>% 
+          summarise(across(everything(), ~ sum(.x)))),
+    .) %>% 
+  bind_rows(.id = 'Experiment') %>% 
+  pivot_longer(names_to = 'db',
+               values_to = 'transcripts',
+               -Experiment) %>% 
+  left_join(map_df(.x = experiments, 
+                   .f = ~ tibble(Experiment = .x, 
+                                 Total = nrow(quantification_tpm_dfs[[.x]])))) %>% 
+  mutate(Experiment = factor(Experiment, levels = rev(c('Mar18','Jul17','Sep20','Nov18'))),
+         db = factor(db, levels = c('eggNOG','KEGG','PFAM','NCBI')),
+         Annotated = 100*transcripts/Total) %>% 
+  bind_rows(tax_df %>% 
+              filter(classified == 'C') %>% 
+              select(Experiment, Annotated= perc) %>% 
+              mutate(db = factor('NCBI')))
+
+figS4A <- 
+  annotation_stats %>% 
+  ggplot(aes(y = Experiment,
+             x = Annotated)) +
+  geom_col(aes(fill = db)) +
+  geom_text(aes(label = paste0(round(Annotated,1),'%')),
+            nudge_x = -11,
+            color = 'white',
+            size = 3) +
+  facet_wrap(~ db,
+             nrow = 1) +
+  labs(x = '% of transcripts',
+        y = '') +
+  guides(fill = 'none') +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_blank()) +
+  ochRe::scale_fill_ochre(palette = 'olsen_seq') +
+  coord_cartesian(clip = 'off')
+```
+
+## Fig S4B: annotated KOs quantification
+
+```{r}
+num_transcripts_per_ko <- 
+  annotation_dfs %>% 
+  bind_rows(.id = 'Experiment') %>% 
+  mutate(Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18'))) %>% 
+  mutate(KEGG_ko = ifelse(is.na(KEGG_ko) | KEGG_ko == '-', 'unknown', KEGG_ko)) %>% 
+  expand_annotations('KEGG_ko', simplify = F) %>% 
+  group_by(KEGG_ko, Experiment) %>% 
+  summarise(num_transcripts = n())
+
+tpm_per_ko <- 
+  quantification_ko_dfs %>% 
+  list_pivot_longer() %>% 
+  bind_rows(.id = 'Experiment') %>% 
+  mutate(Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18'))) %>% 
+  mutate(KEGG_ko = ifelse(is.na(KEGG_ko) | KEGG_ko == '-', 'unknown', KEGG_ko)) %>% 
+  group_by(KEGG_ko, Experiment) %>% 
+  summarise(Abundance = sum(Abundance))
+
+classified_transcripts_tpm <- 
+  tpm_per_ko %>% 
+  mutate(type = if_else(KEGG_ko == 'unknown', 'unclassified','classified')) %>% 
+  group_by(Experiment, type) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  mutate(perc = 100*Abundance/sum(Abundance))
+
+num_ko_per_exp <- 
+  num_transcripts_per_ko %>% 
+  group_by(Experiment) %>% 
+  summarise(KOs = n_distinct(KEGG_ko))
+
+figS4B <- 
+  classified_transcripts_tpm %>% 
+  ggplot(aes(y= fct_rev(Experiment), x = perc)) +
+  geom_col(aes(fill = fct_rev(type))) +
+  scale_fill_manual(values = c(classified = "#8ca8c4",unclassified = "#e0e0e0"), name = NULL) +
+  labs(y = NULL, x = '% of total TPM',
+       subtitle = paste0('Total TPM of ',ggtext_color('**classified**',"#8ca8c4"),' and ',ggtext_color('**unclassified**',"#e0e0e0"),' (KEGG) transcripts'))+
+  theme(plot.subtitle = element_markdown(),
+        panel.grid = element_blank()) +
+  guides(fill = 'none')
+```
+
+## Fig S4
+
+```{r}
+figS4 <- 
+  figS4A / figS4B +
+  plot_annotation(tag_levels = 'A') +
+  plot_layout(heights = c(0.6,0.4)) 
+
+ggsave(figS4,
+       filename = 'figS4.pdf',
+       height = 6,
+       width = 8)
+```
+

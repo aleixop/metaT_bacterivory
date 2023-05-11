@@ -1,0 +1,118 @@
+---
+title: "Figure S6"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+quantification_sp_tmm_dfs_sp52 <-  
+  readRDS('data/quantification/species52/quantification_sp-level_tmm_species52.rds') %>% 
+  list_pivot_longer()
+
+taxonomy_sp52_nt <- 
+  readRDS('data/taxonomy/taxonomy_eukprot-sags-v3.1-nt.rds')
+
+metadata <- 
+  readRDS('data/metadata/metadata.rds')
+
+trophic_modes_final_species <- 
+  read_tsv('data/aux/species25_trophic-modes.txt')
+
+trophic_colors <- 
+  c(Heterotroph = 'darkgoldenrod1',
+    Mixotroph = 'lightsalmon3',
+    Phototroph = '#4AC16DFF')
+
+species_52 <- 
+  read_tsv('data/aux/interesting_species_52.txt')
+
+species_52_list <- 
+  species_52 %>% 
+  pivot_longer(names_to = 'Experiment',values_to = 'val',1:4) %>% 
+  filter(!is.na(val)) %>% 
+  group_by(Experiment) %>% 
+  summarise(EukProt_ID = list(EukProt_ID)) %>% 
+  deframe()
+
+species52_names_format <- 
+  read_tsv('data/aux/species52_name_format.txt')
+```
+
+## Figure S6
+
+```{r}
+taxonomy_dfs_52_summary_nt <- 
+  experiment_set_names() %>% 
+  map(~ taxonomy_sp52_nt[[.x]] %>% 
+        group_by(across(-c(Name, pident, length))) %>% 
+        summarise(mean_pident = mean(pident),
+                  median_pident = median(pident),
+                  n_transcripts = n_distinct(Name)) %>% 
+        mutate(type = case_when(median_pident >= 99 & EukProt_ID %in% species_52_list[[.x]] ~ 'Selected & identical',
+                                median_pident < 99 & EukProt_ID %in% species_52_list[[.x]] ~ 'Selected but diff species',
+                                median_pident >= 99 & !EukProt_ID %in% species_52_list[[.x]] ~ 'Not selected & identical',
+                                median_pident < 99 & !EukProt_ID %in% species_52_list[[.x]] ~ 'Not selected & diff species'),
+               type = factor(type, c('Selected & identical',
+                                     'Not selected & identical',
+                                     'Selected but diff species',
+                                     'Not selected & diff species'))) %>% 
+        left_join(species52_names_format))
+
+selection_sp52 <-
+  experiment_set_names() %>% 
+  map(~ taxonomy_dfs_52_summary_nt[[.x]] %>% 
+        filter(n_transcripts >= 50) %>% 
+        pull(EukProt_ID))
+
+taxonomy_dfs_selection_summary_nt <- 
+  experiment_set_names() %>% 
+  map(~ taxonomy_dfs_52_summary_nt[[.x]] %>% 
+        filter(EukProt_ID %in% selection_sp52[[.x]]) %>% 
+        mutate(type = case_when(str_detect(type, 'identical') ~ 'Selected',
+                          TRUE ~ 'Not selected'),
+               type = factor(type, levels = c('Selected','Not selected'))))
+
+taxonomy_sp52_nt_selection <- 
+  experiment_set_names() %>% 
+  map(~ taxonomy_sp52_nt[[.x]] %>% 
+        filter(EukProt_ID %in% selection_sp52[[.x]])) 
+
+figS6 <-
+  experiment_set_names() %>% 
+  map(~ taxonomy_sp52_nt_selection[[.x]] %>%
+        left_join(taxonomy_dfs_selection_summary_nt[[.x]] %>% 
+                    ungroup() %>% 
+                    select(EukProt_ID, type, Name_to_Use2))) %>% 
+  experiment_bind_rows() %>% 
+  arrange(Name_to_Use) %>% 
+  mutate(Name_to_Use2 = factor(Name_to_Use2, levels = unique(.$Name_to_Use2)),
+         Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18'))) %>% 
+  ggplot(aes(x = pident)) +
+  geom_histogram(aes(fill = type), binwidth = 1) +
+  ggh4x::facet_grid2(Name_to_Use2 ~ Experiment, 
+                     scales = 'free_y', 
+                     independent = 'y',
+                     axes = 'all') +
+  theme(strip.text.y = element_markdown(angle = 0),
+        plot.title = element_markdown()) +
+  scale_fill_manual(values = c('Selected' = 'forestgreen','Not selected' = 'brown2')) +
+  guides(fill = 'none') +
+  labs(title = "<span style = 'color:forestgreen;'>Selected</span> and 
+  <span style = 'color:brown2;'>not selected</span> species in the different experiments",
+  x = 'Percentage of identity (%)',
+  y = 'Number of transcripts')
+
+ggsave(filename = 'figS6.pdf',
+       height = 98,
+       width = 14,
+       limitsize = F)
+```
+

@@ -1,0 +1,225 @@
+---
+title: "Figure 1"
+author: "Aleix Obiol"
+date: "2022-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(speedyseq)
+source('scripts/aux_functions.R')
+```
+
+## Read files
+
+```{r}
+mtags_physeq <- 
+  readRDS('data/mtags/otutab_group.phy')
+
+cell_counts <- 
+  read_tsv('data/cell_counts/cell_counts.txt') %>% 
+  mutate(Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18')))
+```
+
+## Figure 1
+
+### A
+
+```{r}
+phase_rects <- 
+  cell_counts %>%   
+  group_by(Experiment) %>% 
+  filter(Time <= max(Time[metaT=='Yes'])) %>% 
+  group_by(Experiment, State) %>% 
+  filter(Time == max(Time) | Time == min(Time)) %>% 
+  select(Days, Experiment, State) %>% 
+  unique() %>% 
+  arrange(Experiment, Days) %>% 
+  mutate(Time2 = case_when(State != 'lag' & row_number() == 1 ~ NA_real_,
+                           TRUE ~ Days)) %>% 
+  bind_rows(cell_counts %>% 
+              ungroup() %>% 
+              filter(Experiment == 'Sep20', State == 'growth') %>% 
+              select(Days, Experiment, State) %>% 
+              unique() %>% 
+              mutate(Time2 = Days)) %>% 
+  arrange(Experiment, Days) %>% 
+  mutate(n = row_number()) %>% 
+  ungroup() %>% 
+  fill(Time2) %>% 
+  select(-Days) %>% 
+  group_by(Experiment, State) %>% 
+  pivot_wider(names_from = n,
+              values_from = Time2) %>% 
+  dplyr::rename('min' = `1`,'max' = `2`)
+
+phase_rects_sep <- 
+  phase_rects %>% 
+  mutate(Microorganism = 'Bacteria') %>% 
+  bind_rows(phase_rects %>% mutate(Microorganism  ='HF')) %>%
+  bind_rows(phase_rects %>% mutate(Microorganism ='PF')) %>%
+  bind_rows(phase_rects %>% mutate(Microorganism ='Synechococcus')) %>% 
+  left_join(cell_counts %>% 
+              group_by(Microorganism) %>% 
+              summarise(ymin = min(`cells/ml`),
+                        ymax = max(`cells/ml`))) %>% 
+  mutate(Microorganism = factor(Microorganism, levels = c('Bacteria','Synechococcus','HF','PF')),
+         ymax = if_else(Microorganism == 'Prokaryotes',ymax+15700,ymax+1500),
+         State = factor(State, levels = c('lag','growth','decline')))
+
+scientific <- function(x){
+    ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub("e", " %*% 10^", scales::scientific_format()(x)))))
+}
+
+colors <- 
+  c(Bacteria = '#46337EFF',
+    Synechococcus = 'coral3',
+    HF = 'darkgoldenrod1',
+    PF = '#4AC16DFF')
+
+strip_labels <- 
+  c('Bacteria' = ggtext_color('**Bacteria**',colors[1]),
+    'Synechococcus' = ggtext_color('***Synechococcus***', colors[2]),
+    'HF' = ggtext_color('**HF**',colors[3]),
+    'PF' = ggtext_color('**PF**',colors[4]))
+
+fig1A <- 
+  cell_counts %>% 
+  group_by(Experiment) %>% 
+  filter(Time <= max(Time[metaT=='Yes'])) %>% 
+  mutate(Microorganism = factor(Microorganism, levels = c('Bacteria',
+                                                          'Synechococcus',
+                                                          'HF',
+                                                          'PF'))) %>%
+  ggplot(aes(x = Days,
+             y = `cells/ml`)) +
+  geom_rect(data = phase_rects_sep,
+            aes(fill = State,
+                xmin = min, xmax = max, ymin = ymin, ymax = ymax),
+            inherit.aes = F,
+            alpha = 0.3) +
+  scale_fill_viridis_d(option = 'cividis') +
+  guides(fill = guide_legend(override.aes = list(alpha = 0.6))) +
+  geom_smooth(aes(color = Microorganism), se = F, span = 0.5) +
+  geom_point(aes(color = Microorganism)) +
+  facet_grid(Microorganism ~ Experiment,
+             scales = 'free',
+             space = 'free_x',
+             label = labeller(Microorganism  = strip_labels)) +
+  geom_point(data = cell_counts %>% 
+               filter(metaT == 'Yes', Microorganism == 'HF') %>% 
+               mutate(Microorganism = factor(Microorganism, levels = c('Bacteria',
+                                                          'Synechococcus',
+                                                          'HF',
+                                                          'PF'))),
+           shape = 21,color = 'black',fill = 'white', size = 2)+
+  scale_color_manual(values = colors, name = '') +
+  theme(legend.position = 'top',
+        panel.grid = element_blank(),
+        strip.text.y = element_markdown()) +
+  labs(x = 'Time (days)') +
+  scale_y_continuous(labels = scientific) +
+  guides(color = 'none') +
+  labs(y = "cells ml<sup>-1</sup>") +
+  theme(axis.title.y = element_markdown())
+```
+
+### B
+
+```{r}
+main_groups_up <- 
+  c('MAST-1',
+    'MAST-7',
+    'Chrysophyceae',
+    'Telonemia',
+    'Choanoflagellata',
+    'MAST-3',
+    'Chlorarachnea',
+    'Cercozoa',
+    'Ciliophora',
+    'Kinetoplastea')
+
+main_groups_down <- 
+  c('Prymnesiophyceae',
+    'Dictyochophyceae',
+    'MOCH-2',
+    'Pelagophyceae',
+    'Chlorophyta',
+    'Dinoflagellata')
+
+chlorophyta_groups <- 
+  c('Ulvophyceae',
+    'Trebouxiophyceae',
+    'Chlorophyceae',
+    'Chlorodendrophyceae',
+    'Pedinophyceae',
+    'Chloropicophyceae',
+    'Picocystophyceae',
+    'Pyramimonadales',
+    'Mamiellophyceae',
+    'Nephroselmis',
+    'Pycnococcaceae',
+    'Palmophyllophyceae')
+
+group_colors <- 
+  set_names(c(readRDS('data/aux/group_colors.rds'),'aquamarine4'), c(main_groups_up, main_groups_down))
+
+dynamics_main <- 
+  psmelt(mtags_physeq) %>% 
+  mutate(Group = if_else(Group %in% chlorophyta_groups,'Chlorophyta',Group),
+         Sep = case_when(Group %in% main_groups_up ~ '1',
+                         Group %in% main_groups_down ~ '2'),
+         Experiment = factor(Experiment, levels = c('Mar18','Jul17','Sep20','Nov18'))) %>% 
+  group_by(Experiment, Sample, Time, Days, Group, Sep) %>%
+  summarise(Abundance = sum(Abundance, na.rm = T)) %>%
+  filter(Group %in% c(main_groups_up, main_groups_down)) %>% 
+  mutate(Group = factor(Group, levels =c(main_groups_up, main_groups_down)))
+
+plotter_dynamics <- function(group){
+  dynamics_main %>%
+  filter(Group %in% group) %>% 
+  ggplot(aes(x = Days, y = Abundance)) +
+  geom_area(aes(fill = Group)) +
+  facet_grid(cols = vars(Experiment),
+             space = 'free',
+             scales = 'free_x') +
+  scale_fill_manual(values = group_colors[group]) +
+  labs(x = 'Time (days)',
+       y = 'Relative read abundance (%)') +
+  theme(legend.position = 'bottom',
+        legend.title = element_blank(),
+        panel.grid = element_blank()) +
+  scale_y_continuous(limits = c(0, 90.8))
+}
+
+p_dynamics_up <- 
+  plotter_dynamics(main_groups_up) +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text.x = element_blank())
+
+p_dynamics_down <- 
+  plotter_dynamics(main_groups_down) +
+  theme(strip.text = element_blank()) +
+  labs(y = NULL) 
+
+fig1B <- 
+  ((p_dynamics_up + labs(tag = 'B')) / p_dynamics_down) +
+  labs(y = 'Relative read abundance (%)') +
+  theme(axis.title.y = element_text(hjust = -1))
+```
+
+### Fig 1
+
+```{r}
+fig1 <- 
+  (fig1A + labs(tag = 'A')) /
+  fig1B +
+  plot_layout(heights = c(0.6, 0.4))
+
+ggsave(plot = fig1,
+       'fig1.pdf',
+       height = 13,
+       width = 10)
+```
+
