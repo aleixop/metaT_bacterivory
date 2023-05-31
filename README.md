@@ -16,7 +16,6 @@ Download all scripts by using:
 ```
 git clone https://github.com/aleixop/metaT_bacterivory.git
 ```
-
 ### 2. Download all data
 
 Data used in all the analyses is available at [FigShare](https://figshare.com/articles/dataset/Data_for_Gene_expression_dynamics_of_natural_assemblages_of_heterotrophic_flagellates_during_bacterivory_/22801697).
