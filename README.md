@@ -16,7 +16,7 @@ Download all scripts by using:
 ```
 git clone https://github.com/aleixop/metaT_bacterivory.git
 ```
-### 2. Download all data
+### 2. Download the data
 
 Data used in all the analyses is available at [FigShare](https://figshare.com/articles/dataset/Data_for_Gene_expression_dynamics_of_natural_assemblages_of_heterotrophic_flagellates_during_bacterivory_/22801697).
 Download the zip file there and copy the obtained `data/` directory to the root of the project you just created in the previous step.
