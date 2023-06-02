@@ -27,4 +27,4 @@ A separate R Markdown file is available for each figure/table present in the pap
 
 ## Raw data
 
-Raw data used for this project is available at NCBI with accession number PRJNA973582.
+Raw data used for this project is available at NCBI with accession number [PRJNA973582](https://www.ncbi.nlm.nih.gov/sra/?term=PRJNA973582).
