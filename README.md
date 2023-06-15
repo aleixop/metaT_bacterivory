@@ -3,7 +3,7 @@
 This repository contains code and data included in:
 
 --------
-Obiol, A., López-Escardó, D., Salomaki, E.D, Wiśniewska, M.M., Forn, I., Sà, E., Vaqué, D., Kolísko, M., and Massana, R. Gene expression dynamics of natural assemblages of heterotrophic flagellates during bacterivory. *Microbiome* 2023; *in press*.
+Obiol, A., López-Escardó, D., Salomaki, E.D, Wiśniewska, M.M., Forn, I., Sà, E., Vaqué, D., Kolísko, M., and Massana, R. [Gene expression dynamics of natural assemblages of heterotrophic flagellates during bacterivory](https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-023-01571-5). *Microbiome* 2023; 11: 134. doi: 10.1186/s40168-023-01571-5
 
 --------
 
