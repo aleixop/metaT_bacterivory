@@ -27,4 +27,5 @@ A separate R Markdown file is available for each figure/table present in the pap
 
 ## Raw data
 
-Raw data used for this project is available at ENA with accession number [PRJNA973582](https://www.ebi.ac.uk/ena/browser/view/PRJNA973582).
+Raw data used for this project is available at ENA with accession numbers [PRJNA973582](https://www.ebi.ac.uk/ena/browser/view/PRJNA973582) and [PRJNA543770](https://www.ebi.ac.uk/ena/browser/view/PRJNA543770).
+You can find the correspondence between NCBI/ENA accession numbers and real sample names and the rest of metadata in the [full_metadata.txt](full_metadata.txt) file.
